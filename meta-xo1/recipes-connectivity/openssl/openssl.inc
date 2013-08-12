@@ -6,7 +6,7 @@ SECTION = "libs/network"
 
 # "openssl | SSLeay" dual license
 LICENSE = "openssl"
-LIC_FILES_CHKSUM = "file://LICENSE;md5=f9a8f968107345e0b75aa8c2ecaa7ec8"
+
 
 DEPENDS = "perl-native-runtime"
 
@@ -17,8 +17,16 @@ S = "${WORKDIR}/openssl-${PV}"
 
 AR_append = " r"
 CFLAG = "${@base_conditional('SITEINFO_ENDIANNESS', 'le', '-DL_ENDIAN', '-DB_ENDIAN', d)} \
-	-DTERMIO ${FULL_OPTIMIZATION} -Wall -DCAVIUM_ENGINE"
+	-DTERMIO ${FULL_OPTIMIZATION} -Wall -DCAVIUM_SSL \
+	-I/home/karl/Work/xoware/cns3xxx-sdk/apps-pool/nitrox-driver-cns3xxx-3.0-pre-release/software/api  \
+	-I/home/karl/Work/xoware/cns3xxx-sdk/apps-pool/nitrox-driver-cns3xxx-3.0-pre-release/software/include"
+#-DCAVIUM_ENGINE -DCAVIUM_SSL -DCAVIUM_CIPHERS 
 
+#EXTRA_OECONF += "cavium"
+EXTRA_OECONF += "-I/home/karl/Work/xoware/cns3xxx-sdk/apps-pool/nitrox-driver-cns3xxx-3.0-pre-release/software/include -DMC2 \
+-DOPENSSL_NO_HW_4758_CCA -DOPENSSL_NO_HW_PADLOCK -DOPENSSL_NO_HW_NCIPHER -DOPENSSL_NO_HW_NURON -DOPENSSL_NO_HW_ATALLA -DOPENSSL_NO_HW_SUREWARE \
+-DOPENSSL_NO_HW_UBSEC -DOPENSSL_NO_HW_AEP -DOPENSSL_NO_HW_CSWIFT "
+	
 # Avoid binaries being marked as requiring an executable stack (which causes 
 # issues with SELinux on the host)
 CFLAG_append_virtclass-native = " -Wa,--noexecstack"
@@ -30,6 +38,9 @@ CFLAG_mtx-2 := "${@'${CFLAG}'.replace('-O2', '')}"
 export DIRS = "crypto ssl apps"
 export EX_LIBS = "-lgcc -ldl"
 export AS = "${CC} -c"
+
+APIDIR=/home/karl/Work/xoware/cns3xxx-sdk/apps-pool/nitrox-driver-cns3xxx-3.0-pre-release/software/api
+export APIDIR
 
 inherit pkgconfig siteinfo
 
@@ -99,17 +110,24 @@ do_configure () {
         if [ "x$useprefix" = "x" ]; then
                 useprefix=/
         fi        
-	perl ./Configure ${EXTRA_OECONF} shared --prefix=$useprefix --openssldir=${libdir}/ssl --libdir=`basename ${libdir}` $target
+
+#	perl ./Configure ${EXTRA_OECONF} shared --prefix=$useprefix --openssldir=${libdir}/ssl $target
+	perl ./Configure compiler:arm-poky-linux-gnueabi-gcc ${EXTRA_OECONF} shared enable-tlsext --prefix=$useprefix --openssldir=${libdir}/ssl cavium
+	
+
 }
 
 do_compile () {
+	touch include/app_defines.h
+	ln -sf ../rsa_d/rsa_sign.c  crypto/rsa/rsa_sign.c
+#	oe_runmake libssl.so libcrypto.so
 	oe_runmake
 }
 
 do_install () {
-	install -m 0755 -d ${D}${libdir}/pkgconfig
-	oe_runmake INSTALL_PREFIX="${D}" MANDIR="${mandir}" install
-	chmod 644 ${D}${libdir}/pkgconfig/openssl.pc
+#	install -m 0755 -d ${D}${libdir}/pkgconfig
+	oe_runmake INSTALL_PREFIX="${D}" MANDIR="${mandir}" install_sw
+#	chmod 644 ${D}${libdir}/pkgconfig/openssl.pc
 	oe_libinstall -so libcrypto ${D}${libdir}
 	oe_libinstall -so libssl ${D}${libdir}
 }

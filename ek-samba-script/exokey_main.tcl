@@ -2,7 +2,7 @@
 set bootstrapFile       "bootstrap.bin"
 set ubootFile           "u-boot.bin"
 set kernelFile          "linux.bin"
-set rootfsFile          "rootfs-squashfs.ubi"
+set rootfsFile          "rootfs.ubi"
 
 ## board variant
 set boardFamily "sama5d3"

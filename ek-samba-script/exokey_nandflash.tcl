@@ -226,7 +226,7 @@ lappend u_boot_variables \
     "stdout=serial" \
     "stderr=serial" \
     "bootargs=console=ttyS0,115200 mtdparts=atmel_nand:256K(bs)ro,512K(ub)ro,256K(env)ro,512K(env_r)ro,512K(dtb),6M(ker),8M(cfg),-(store) root=/dev/ram0 ubi.mtd=7" \
-    "bootcmd=nand read 0x21000000 0x00180000 0x000050D4; nand read 0x22000000 0x00200000 0x580000; bootm 0x22000000 - 0x21000000"
+    "bootcmd=nand read 0x21000000 0x00180000 0x00008000;nand read 0x22000000 0x00200000 0x600000;bootm 0x22000000 - 0x21000000"
 
 
 puts "-I- === Initialize the NAND access ==="
@@ -266,7 +266,9 @@ if {$pmeccConfig != "none"} {
    NANDFLASH::NandSetTrimffs 1
 }
 
-puts "-I- === Load the linux file system ==="
-send_file {NandFlash} "$rootfsFile" $rootfsAddr 0
+#NANDFLASH::EraseBlocks 1000000 8000000
+
+#puts "-I- === Load the linux file system ==="
+#send_file {NandFlash} "$rootfsFile" $rootfsAddr 0
 
 puts "-I- === DONE. ==="

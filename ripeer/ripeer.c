@@ -1,8 +1,3 @@
-/* This example code is placed in the public domain. */
-
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -285,7 +280,6 @@ int main(void)
 		conn_sd = malloc(sizeof(int));
 		*conn_sd = sd;
 
-		PR_LNO
 		printf("- connection from %s, port %d\n", inet_ntop(AF_INET, &sa_cli.sin_addr, topbuf,
 								    sizeof(topbuf)), ntohs(sa_cli.sin_port));
 
@@ -320,7 +314,6 @@ void *connection_handler(void *conn_sd)
 
 	free(conn_sd);
 
-	PR_LNO
 	gnutls_init(&session, GNUTLS_SERVER);
 	gnutls_priority_set(session, priority_cache);
 	gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE,
@@ -371,18 +364,14 @@ void *connection_handler(void *conn_sd)
 		}
 		printf("\n");
 	}
-	PR_LNO
 	/* do not wait for the peer to close the connection.
 	 */
 //this crashes likely in combination with persistent connection
 //likely a bug I must have uncovered.
 	//gnutls_bye(session, GNUTLS_SHUT_WR);
 
-	PR_LNO
 	close(sd);
-	PR_LNO
 	gnutls_deinit(session);
-	PR_LNO
 }
 
 
@@ -454,7 +443,6 @@ int _verify_certificate_callback(gnutls_session_t session)
 #endif
 
 	/* notify gnutls to continue handshake normally */
-	PR_LNO
 	printf("Certificate Verified");
 	return 0;
 }
@@ -465,7 +453,6 @@ void kdf_cleanup_ho(gpointer data)
 
 //	free(locptr);
 	printf("differed to val cleanup.\n");
-	PR_LNO
 }
 
 void vdf_cleanup_ho(gpointer data)
@@ -475,7 +462,6 @@ void vdf_cleanup_ho(gpointer data)
 	uint64_t u;
 	int lsval;
 
-	PR_LNO
 		thr_dat = (struct th_lk_str *)data;
 
 	u = 0xDEAD;
@@ -507,7 +493,6 @@ void vdf_cleanup_ho(gpointer data)
 		}
 	}
 
-	PR_LNO
 }
 
 void exonet_worker(gnutls_session_t session, char *buffer)
@@ -522,11 +507,9 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	int lsval;
 	int ret1;
 
-	PR_LNO
 	if (gnutls_record_send(session, buffer, ret) != 6)
 		goto leave_en;
 
-	PR_LNO
 		ret = gnutls_record_recv(session, buffer, MAX_BUFF);
 	if (ret != 29)
 		goto leave_en;
@@ -539,7 +522,6 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	loc_val->th_lk = loc_pm;
 	loc_val->th_str = loc_key;
 
-	PR_LNO
 	loc_val->th_ev = eventfd(0, 0);
 	loc_val->back_sig = eventfd(0, 0);
 	if (sem_init(loc_val->th_lk, 0, 1)) {
@@ -552,7 +534,6 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	//giant lock around it
 /*
  */
-	PR_LNO
 		tempb = g_hash_table_contains(the_ght, (gconstpointer)loc_key);
 	g_hash_table_replace(the_ght, (gpointer)loc_key, (gpointer)loc_val);
 	if (!tempb)
@@ -569,17 +550,14 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 		if (u == 0xDEAD)
 			goto leave_en;
 //NOT-ISSUE: do cleanup and continue not goto.--WHY?
-		PR_LNO
 
 		if (loc_val->th_str == NULL)
 			goto leave_en;
 		ret = strlen(loc_val->th_str);
 
-		PR_LNO
 		//printf("sending %d chars : \n %s\n", ret, loc_val->th_str);
 		if (gnutls_record_send(session, loc_val->th_str, ret) != ret)
 			goto leave_en;
-		PR_LNO
 			ret1 = 0;
 		do
 			ret1 += gnutls_record_recv(session, buffer, MAX_BUFF);
@@ -589,7 +567,6 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 			goto leave_en;
 		}
 		buffer[ret1] = 0;
-		PR_LNO
 		/*
 		 * if (loc_val->th_str)
 		 *      free(loc_val->th_str);
@@ -597,25 +574,20 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 		 * loc_val->th_str = strncpy(loc_val->th_str, buffer, sizeof(buffer));
 		 */
 		loc_val->th_str = buffer;
-		PR_LNO
 
 			u = 1;
 		s = write(loc_val->back_sig, &u, sizeof(uint64_t)); //ISSUE: use semaphore
-		PR_LNO
 	}
 
 leave_en:
-	PR_LNO
 	if (loc_val) {
 		if (fd_is_valid(loc_val->th_ev))
 			close(loc_val->th_ev);
 		if (fd_is_valid(loc_val->back_sig))
 			close(loc_val->back_sig);
 		// all the mutexed threads are liberated
-		PR_LNO
 		if (!sem_getvalue(loc_val->th_lk, &lsval)) {
 			while (sem_trywait(loc_val->th_lk) == EAGAIN)
-				PR_LNO
 				sem_post(loc_val->th_lk);
 			sem_post(loc_val->th_lk);
 			sem_destroy(loc_val->th_lk);
@@ -625,16 +597,12 @@ leave_en:
 		 *      free(loc_val->th_str);
 		 */
 	}
-	PR_LNO
 	if (loc_key)
 		free(loc_key);
-	PR_LNO
 	if (loc_pm)
 		free(loc_pm);
-	PR_LNO
 	if (loc_val)
 		free(loc_val);
-	PR_LNO
 }
 
 void exokey_worker(gnutls_session_t session, char *buffer)
@@ -647,18 +615,15 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	sem_t *loc_pm = NULL;
 	int ret = 6;
 
-	PR_LNO
 	// send back whatever we received so we will get the json back
 	if (gnutls_record_send(session, buffer, ret) != 6)
 		goto leave_ek;
 
-	PR_LNO
 		ret = gnutls_record_recv(session, buffer, MAX_BUFF);
 	if (ret < 100)
 		goto leave_ek;
 	buffer[ret] = 0;
 
-	PR_LNO
 	//find loc_key in the json
 		loc_key = strstr(buffer, "EN_DDNS") + 2;
 	if (!loc_key)
@@ -680,11 +645,9 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
 	if (!tempb)
 		goto leave_ek;
-	PR_LNO
 		thr_dat = (struct th_lk_str *)tempb;
 	loc_pm = thr_dat->th_lk;
 	sem_wait(loc_pm);
-	PR_LNO
 
 /*sg
  *      if (thr_dat->th_str)
@@ -694,35 +657,29 @@ void exokey_worker(gnutls_session_t session, char *buffer)
  */
 	thr_dat->th_str = buffer;
 
-	PR_LNO
 		u = 1;
 	if (fd_is_valid(thr_dat->th_ev))
 		s = write(thr_dat->th_ev, &u, sizeof(uint64_t)); //ISSUE:limit t/o of this block
 	// use semaphore
 	else
 		goto leave_ek;
-	PR_LNO
 	if (s != sizeof(uint64_t) || u != 1)
 		goto leave_ek;
-	PR_LNO
 
 
 	if (fd_is_valid(thr_dat->th_ev))
 		s = read(thr_dat->back_sig, &u, sizeof(uint64_t)); //ISSUE:limit t/o of this block
 	else
 		goto leave_ek;
-	PR_LNO
 	if (s != sizeof(uint64_t) || u != 1)
 		goto leave_ek;
 
 
-	PR_LNO
 	if (gnutls_record_send(session, thr_dat->th_str, strlen(thr_dat->th_str))
 	    != strlen(thr_dat->th_str))
 		goto leave_ek;
 
 leave_ek:
-	PR_LNO
 	if (loc_pm)
 		sem_post(loc_pm);
 	/*
@@ -733,7 +690,6 @@ leave_ek:
 //ISSUE: do a timed wait for back_sig before cleaningup
 	if (loc_key)
 		free(loc_key);
-	PR_LNO
 }
 
 

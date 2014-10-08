@@ -1,0 +1,131 @@
+#
+#Logic of the Rendezvous Server
+#
+#* hello always responded by hello by the other side
+#
+#main
+#    gnutls_global_init
+#    gnutls_certificate_allocat_credentials
+#    gnutls_certificate_set_x509_trust_file
+#    gnutls_certificate_set_x509_crl_file
+#    gnutls_certificate_set_x509_key_file
+#    generate_dh_params
+#
+#    gnutls_priority_init
+#    gnutls_certificate_set_dh_params
+#
+#    init ghashtable
+#    Socket
+#    bind to 43210 for EN
+#    bind to 43211 for EK
+#    accept connection
+#        thread-out EN/EK
+#
+#    gnutls_global_deinit
+#    exit(0)
+#
+#ENthread
+#    so_keepalive (option of the client)
+#    copy filedescriptor to enstruct
+#    initialize enstruct->futex
+#    insert hash(ddns_name, enstruct)
+#
+#EKthread
+#    sit for activity
+#    receive r_json
+#    retrieve hash(ddns_name, enstruct, ghashtable)
+#    set  enstruct->futex
+#    copy it to a local pointer here
+#    send hello to the fd
+#    receive hello or timeout
+#        if timeout then close the connection for both EN/EK and remove hash,
+#            goto cleanup
+#    send the r_json on that descriptor
+#    receive r_json from descriptor or wait for timeout on the sockets
+#        if timeout then close the connection for both EN/EK and remove hash,
+#            goto cleanup
+#    send r_json to the EK
+#    close connection to EK
+#
+#    cleanup
+#        unset enstruct->futex
+#
+#
+#
+#_______________________________________________________________________________
+#STUN Assisted Port Prediction and Rendezvous Initiated Peering 
+#
+#
+#        2 distinct STUN servers (1 on ns1.vpex.org and 2 on ns2.vpex.org)
+#        1 Rendezvous server  (on vpex.org)
+#        EN starts ipsec daemon on known local srcport
+#        EK does RFC5780 nat behavior discovery by using 2 random local srcports to 2 stun ports on each of the 2 stun servers
+#        EN opens a long-term tcp connection to Rendezvous server
+#        EK opens a tcp connection to Rendezvous server and offers a rendezvous_json
+#        rendezvous_json 
+#        { 
+#                EK_IP based on stun discovery,  
+#                EK_PORT based on last connection to the 2nd stun server, 
+#                EK_RANGE_VECTOR (this is the prediction,  typical range from 1-100), 
+#                EN_IP based on stun discovery, 
+#                EN_PORT based on last connection to the 2nd stun server, 
+#                EN_RANGE_VECTOR (this is the prediction, typical range from 1-100),   
+#                EN_DDNS, 
+#                EK_ID/NAME
+#                ASSOCIATION_HMAC (we will use this in future for added security, EN will either provide key to rendezvous server when it connects or do interactively) 
+#        }
+#        Rendezvous server passes the information to EN
+#        EN spins out a thread which will do the following tasks
+#        EN does RFC5780 nat behavior discovery by using 2 random local srcports to 2 stun ports on each of the 2 stun servers
+#        EN returns rendezvous_json to the rendezvous server which shunts it to the EK's connection file-descriptor based on EK_ID, EN_DDNS
+#        EK will open a listener on known local srcport. We will reuse this port for ipsec daemon
+#        EN will send hello udp raw packet to EK_IP to all the EK_RANGE_VEC ports with srcport set to the ipsec known port
+#                        **explore long ttl on the initiation packets from both sides.
+#        Asynchronously EK will send a junk udp raw packet to EN_IP, EN_RANGE_VEC ports with srcport set to the known local bound port of the listener
+#        EK listener will catch a hello from EN and the srcport on this packet is the part of the {EK_DDNS, DEST_PORT} tuple  that EK needs to use, to establish ipsec connection with EN and it will proceed with that. 
+#        EK could discover multiple of these tuples but can use any arbitrary one.
+#
+#THIS ENTIRE SEQUENCE HAS TO HAPPEN TWICE, ONCE FOR PORT 500 AND THEN FOR PORT 4500
+#_______________________________________________________________________________
+#
+#
+#COMPILING
+
+
+
+/bin/rm ripeer
+#/bin/rm xostun.o spred.o spred_ut spred_ut.o
+#/bin/rm rudder_ek.o rudder_en.o rudder_ut_ek.o rudder_ut_en.o rudder_ek_ut rudder_en_ut
+#/bin/rm sprayer_ek.o sprayer_en.o 
+#/bin/rm eclient_ut_en.o eclient_ut_ek.o eclient_ek_ut eclient_en_ut
+
+gcc $(pkg-config gnutls --cflags --libs) $(pkg-config nice --libs --cflags) ripeer.c -o ripeer -lpthread
+
+#gcc $(pkg-config nice --libs --cflags) -g -O -c xo_bind.c -o xostun.o 
+#gcc $(pkg-config nice --libs --cflags) -g -O -c spred.c -o spred.o -ljansson
+#gcc $(pkg-config nice --libs --cflags) -g -O -c spred_ut.c -o spred_ut.o -ljansson
+#gcc $(pkg-config nice --libs --cflags) spred_ut.o xostun.o spred.o -o spred_ut -ljansson
+#
+#gcc  -ljansson -DBLD_EN=1 -g -O -c rudder.c -o rudder_en.o
+#gcc  -ljansson -g -O -c rudder.c -o rudder_ek.o -lpthread
+#gcc  -ljansson -DBLD_EN=1 -g -O -c rudder_ut.c -o rudder_ut_en.o
+#gcc  -ljansson -g -O -c rudder_ut.c -o rudder_ut_ek.o -lpthread
+#gcc  -ljansson rudder_en.o rudder_ut_en.o -o rudder_en_ut
+#gcc  -ljansson rudder_ek.o rudder_ut_ek.o -o rudder_ek_ut -lpthread
+#
+#
+## -DDBG_FLG=1
+#gcc $(pkg-config gnutls --cflags --libs) $(pkg-config nice --cflags --libs)  -g -O -c sprayer.c  -o sprayer_ek.o -ljansson -DEN0LOOP  
+#gcc $(pkg-config gnutls --cflags --libs) $(pkg-config nice --cflags --libs) -DBLD_EN=1 -g -O -c sprayer.c  -o sprayer_en.o -ljansson -DEN0LOOP  
+#
+#
+#gcc -ljansson $(pkg-config gnutls --cflags --libs) $(pkg-config nice --cflags --libs) -DBLD_EN=1 -g -O -c eclient_ut.c -o eclient_ut_en.o
+#gcc -ljansson $(pkg-config gnutls --cflags --libs) $(pkg-config nice --cflags --libs) -g -O -c eclient_ut.c -o eclient_ut_ek.o
+#gcc $(pkg-config gnutls --cflags --libs) $(pkg-config nice --cflags --libs) -ljansson -lpthread eclient_ut_ek.o xostun.o spred.o sprayer_ek.o rudder_ek.o -o eclient_ek_ut
+#gcc $(pkg-config gnutls --cflags --libs) $(pkg-config nice --cflags --libs) -ljansson -lpthread eclient_ut_en.o xostun.o spred.o sprayer_en.o rudder_en.o -o eclient_en_ut
+#
+#
+#
+##to run the UT
+##./eclient_en_ut stun.stunprotocol.org:3478  stun.sipgate.net:3478 localhost:43210
+##./eclient_ek_ut stun.stunprotocol.org:3478  stun.sipgate.net:3478 localhost:43210

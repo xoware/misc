@@ -1,6 +1,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -16,6 +17,11 @@
 #include <stdint.h>
 #include <fcntl.h>
 #include <semaphore.h>
+// 
+
+#define DBG(FMT,ARG...) \
+	fprintf(stderr, "%s:%d: " FMT, __FUNCTION__, __LINE__, ##ARG);
+
 
 #ifdef DBG_FLG
 #define PR_LNO  printf("\n LINE# : %d |   func : %s \n\n", __LINE__, __func__);
@@ -36,7 +42,12 @@
  */
 
 #define MAX_BUFF 1024
-#define PORT 43210               /* listen to 43210 port */
+
+#ifndef DEFAULT_PORT
+#define DEFAULT_PORT 43210               /* listen to 43210 port */
+#endif
+
+static int PORT = DEFAULT_PORT;
 
 #define KEYFILE "key_certs/rvous.key"
 #define CERTFILE "key_certs/rvous.crt"
@@ -46,9 +57,11 @@
 struct th_lk_str {
 	int	th_ev;
 	int	back_sig;
-	sem_t * th_lk;
-	char *	th_str;
+	sem_t semaphore;
+	char *	th_str; // thread string
 };
+
+static bool keep_running = true;
 
 static char keyfiledat[] =
 	"-----BEGIN RSA PRIVATE KEY-----\n"
@@ -178,6 +191,12 @@ void kdf_cleanup_ho(gpointer data);
 void exonet_worker(gnutls_session_t, char *);
 void exokey_worker(gnutls_session_t, char *);
 
+static void sig_Handler(int sig)
+{
+
+	printf ("Signal recieved %d\n", sig);
+	keep_running = false;
+}
 
 int main(void)
 {
@@ -189,6 +208,10 @@ int main(void)
 	socklen_t client_len;
 	char topbuf[512];
 	int optval = 1;
+
+	printf ("starting compiled %s %s \n", __DATE__, __TIME__);
+/// signal(SIGTERM, sig_Handler);
+//	signal(SIGINT, sig_Handler);
 
 	/* for backwards compatibility with gnutls < 3.3.0 */
 	gnutls_global_init();
@@ -225,6 +248,7 @@ int main(void)
 					(GDestroyNotify)kdf_cleanup_ho,
 					(GDestroyNotify)vdf_cleanup_ho);
 
+	printf("Generting DH Params \n");
 	generate_dh_params();
 
 	gnutls_priority_init(&priority_cache,
@@ -260,7 +284,7 @@ int main(void)
 	optval = 10;            /* 10 seconds between each probe */
 	setsockopt(listen_sd, SOL_TCP, TCP_KEEPINTVL, &optval, sizeof(optval));
 
-
+	printf("bind socket\n");
 	if (bind(listen_sd, (struct sockaddr *)&sa_serv, sizeof(sa_serv)) < 0) {
 		fprintf(stderr, "bind failed");
 		return 1;
@@ -271,7 +295,7 @@ int main(void)
 	printf("Server ready. Listening to port '%d'.\n\n", PORT);
 
 	client_len = sizeof(sa_cli);
-	for (;; ) {
+	while (keep_running) {
 		sd = accept(listen_sd, (struct sockaddr *)&sa_cli,
 			    &client_len);
 		if (sd < 0)
@@ -309,7 +333,7 @@ void *connection_handler(void *conn_sd)
 {
 	gnutls_session_t session;
 	int ret;
-	char buffer[MAX_BUFF + 1];
+	char buffer[MAX_BUFF + 1] = {0,};
 	int sd = *(int *)conn_sd;
 
 	free(conn_sd);
@@ -328,17 +352,15 @@ void *connection_handler(void *conn_sd)
 		ret = gnutls_handshake(session);
 	while (ret < 0 && gnutls_error_is_fatal(ret) == 0);
 	if (ret < 0) {
-		close(sd);
-		gnutls_deinit(session);
 		fprintf(stderr,
 			"*** Handshake has failed (%s)\n\n",
 			gnutls_strerror(ret));
-		return;
+		goto finish_thread;
 	}
 	printf("- Handshake was completed\n");
 	/* see the Getting peer's information example */
 	/* print_info(session); */
-	for (;; ) {
+	while(keep_running) {
 		ret = gnutls_record_recv(session, buffer, MAX_BUFF);
 		if (ret == 0) {
 			printf
@@ -370,8 +392,10 @@ void *connection_handler(void *conn_sd)
 //likely a bug I must have uncovered.
 	//gnutls_bye(session, GNUTLS_SHUT_WR);
 
+	finish_thread:
 	close(sd);
 	gnutls_deinit(session);
+
 }
 
 
@@ -477,16 +501,14 @@ void vdf_cleanup_ho(gpointer data)
 			if (fd_is_valid(thr_dat->back_sig))
 				close(thr_dat->back_sig);
 			// all the mutexed threads are liberated
-			if (!sem_getvalue(thr_dat->th_lk, &lsval)) {
-				while (sem_trywait(thr_dat->th_lk) == EAGAIN)
-					sem_post(thr_dat->th_lk);
-				sem_post(thr_dat->th_lk);
-				sem_destroy(thr_dat->th_lk);
+			if (!sem_getvalue(&thr_dat->semaphore, &lsval)) {
+				while (sem_trywait(&thr_dat->semaphore) == EAGAIN)
+					sem_post(&thr_dat->semaphore);
+				sem_post(&thr_dat->semaphore);
+				sem_destroy(&thr_dat->semaphore);
 			}
 			if (thr_dat->th_str)
 				free(thr_dat->th_str);
-			if (thr_dat->th_lk)
-				free(thr_dat->th_lk);
 			if (thr_dat)
 				free(thr_dat);
 			// need to destroy tls session also
@@ -500,13 +522,13 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	struct th_lk_str *loc_val = NULL;
 	gboolean tempb;
 	char *loc_key = NULL;
-	sem_t *loc_pm = NULL;
 	int ret = 6;
 	uint64_t u;
 	ssize_t s;
 	int lsval;
 	int ret1;
 
+	DBG("buffer = %s \n", buffer);
 	if (gnutls_record_send(session, buffer, ret) != 6)
 		goto leave_en;
 
@@ -514,17 +536,17 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	if (ret != 29)
 		goto leave_en;
 	buffer[29] = 0;
+	DBG("buffer = %s \n", buffer);
 
 	loc_key = malloc(30);
 	loc_key = strncpy(loc_key, buffer, 30);
-	loc_pm = malloc(sizeof(sem_t));
 	loc_val = malloc(sizeof(struct th_lk_str));
-	loc_val->th_lk = loc_pm;
+	DBG("loc_key= %s \n", loc_key);
 	loc_val->th_str = loc_key;
 
 	loc_val->th_ev = eventfd(0, 0);
 	loc_val->back_sig = eventfd(0, 0);
-	if (sem_init(loc_val->th_lk, 0, 1)) {
+	if (sem_init(&loc_val->semaphore, 0, 1)) {
 		printf("mutex_init failed, do something else here\n");
 		goto leave_en;
 	}
@@ -539,8 +561,8 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	if (!tempb)
 		printf("Replaced the old thread \n");
 
-	while (1) {
-		//first the thread will sit on the th_ev
+	while (keep_running) {
+		//first the thread will set on the th_ev
 		//then it will consume
 		//finally it will signal back_Sig
 		s = read(loc_val->th_ev, &u, sizeof(uint64_t)); //ISSUE: use semaphore
@@ -555,7 +577,7 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 			goto leave_en;
 		ret = strlen(loc_val->th_str);
 
-		//printf("sending %d chars : \n %s\n", ret, loc_val->th_str);
+		printf("sending %d chars : \n %s\n", ret, loc_val->th_str);
 		if (gnutls_record_send(session, loc_val->th_str, ret) != ret)
 			goto leave_en;
 			ret1 = 0;
@@ -586,11 +608,11 @@ leave_en:
 		if (fd_is_valid(loc_val->back_sig))
 			close(loc_val->back_sig);
 		// all the mutexed threads are liberated
-		if (!sem_getvalue(loc_val->th_lk, &lsval)) {
-			while (sem_trywait(loc_val->th_lk) == EAGAIN)
-				sem_post(loc_val->th_lk);
-			sem_post(loc_val->th_lk);
-			sem_destroy(loc_val->th_lk);
+		if (!sem_getvalue(&loc_val->semaphore, &lsval)) {
+			while (sem_trywait(&loc_val->semaphore) == EAGAIN)
+				sem_post(&loc_val->semaphore);
+			sem_post(&loc_val->semaphore);
+			sem_destroy(&loc_val->semaphore);
 		}
 		/*
 		 * if (loc_val->th_str)
@@ -599,8 +621,6 @@ leave_en:
 	}
 	if (loc_key)
 		free(loc_key);
-	if (loc_pm)
-		free(loc_pm);
 	if (loc_val)
 		free(loc_val);
 }
@@ -612,9 +632,9 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	struct th_lk_str *thr_dat = NULL;
 	ssize_t s;
 	uint64_t u;
-	sem_t *loc_pm = NULL;
 	int ret = 6;
 
+	DBG("buffer = %s \n", buffer);
 	// send back whatever we received so we will get the json back
 	if (gnutls_record_send(session, buffer, ret) != 6)
 		goto leave_ek;
@@ -623,6 +643,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	if (ret < 100)
 		goto leave_ek;
 	buffer[ret] = 0;
+	DBG("buffer = %s \n", buffer);
 
 	//find loc_key in the json
 		loc_key = strstr(buffer, "EN_DDNS") + 2;
@@ -646,8 +667,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	if (!tempb)
 		goto leave_ek;
 		thr_dat = (struct th_lk_str *)tempb;
-	loc_pm = thr_dat->th_lk;
-	sem_wait(loc_pm);
+	sem_wait(&thr_dat->semaphore);
 
 /*sg
  *      if (thr_dat->th_str)
@@ -679,9 +699,8 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	    != strlen(thr_dat->th_str))
 		goto leave_ek;
 
-leave_ek:
-	if (loc_pm)
-		sem_post(loc_pm);
+	leave_ek:
+	sem_post(&thr_dat->semaphore);  // decrement
 	/*
 	 * if (thr_dat)
 	 *      if (thr_dat->th_str)

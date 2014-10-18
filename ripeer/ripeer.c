@@ -257,6 +257,7 @@ int main(void)
 
 	gnutls_certificate_set_dh_params(x509_cred, dh_params);
 
+	printf("Creating listen socket \n");
 	/* Socket operations
 	 */
 	listen_sd = socket(AF_INET, SOCK_STREAM, 0);
@@ -664,9 +665,11 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	//give up the mutex
 	printf("Going to search the got for %s\n", loc_key);
 	tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
-	if (!tempb)
+	if (!tempb) {
+		DBG("ExoNet not connected here, not in table\n");
 		goto leave_ek;
-		thr_dat = (struct th_lk_str *)tempb;
+	}
+	thr_dat = (struct th_lk_str *)tempb;
 	sem_wait(&thr_dat->semaphore);
 
 /*sg
@@ -700,7 +703,8 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 		goto leave_ek;
 
 	leave_ek:
-	sem_post(&thr_dat->semaphore);  // decrement
+	if (thr_dat)
+		sem_post(&thr_dat->semaphore);  // decrement
 	/*
 	 * if (thr_dat)
 	 *      if (thr_dat->th_str)

@@ -5,7 +5,7 @@ LNICE_CFLAGS ?= $(shell pkg-config nice --cflags)
 LNICE_LDFLAGS ?= $(shell pkg-config nice --libs)
 DEBUG_CFLAGS ?=
 
-CFLAGS += -O -g3 ${GNUTLS_CFLAGS} ${LNICE_CFLAGS}  ${DEBUG_CFLAGS}
+CFLAGS +=  -Wall -Os -g3 ${GNUTLS_CFLAGS} ${LNICE_CFLAGS}  ${DEBUG_CFLAGS}
 
 all: ripeer
 

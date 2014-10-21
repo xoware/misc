@@ -22,7 +22,6 @@
 #define DBG(FMT,ARG...) \
 	fprintf(stderr, "%s:%d: " FMT, __FUNCTION__, __LINE__, ##ARG);
 
-#define DBG_FLG 1
 
 #ifdef DBG_FLG
 #define PR_LNO  fprintf(stderr,"\n LINE# : %d |   func : %s \n\n", __LINE__, __func__);
@@ -488,27 +487,22 @@ gboolean mts_ghash_table_replace(GHashTable *the_ght, gpointer loc_key, gpointer
 	do {
 		pthread_mutex_lock(&mt_gl);
 		tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
-PR_LNO
 		if (tempb) {
 			thr_dat = (struct th_lk_str *)tempb;
 			thr_dat->fade = 0xDEAD;
-PR_LNO
 			write(thr_dat->th_ev, &thr_dat->fade, sizeof(uint64_t));
 			write(thr_dat->back_sig, &thr_dat->fade, sizeof(uint64_t));
 		}
 		else {
-PR_LNO
 			pthread_mutex_unlock(&mt_gl);
 			break;
 		}
 		pthread_mutex_unlock(&mt_gl);
-PR_LNO
 		pthread_yield();
 		usleep(100000);
 	} while (1);
 	pthread_mutex_lock(&mt_gl);
 	g_hash_table_replace(the_ght, (gpointer)loc_key, (gpointer)loc_val);
-PR_LNO
 	pthread_mutex_unlock(&mt_gl);
 	ret = true;
 	return ret;
@@ -529,33 +523,27 @@ gboolean mts_ghash_table_remove(GHashTable *the_ght, gconstpointer loc_key)
 	do { 
 		pthread_mutex_lock(&mt_gl);
 		tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
-PR_LNO
 		if (tempb) {
 			thr_dat = (struct th_lk_str *)tempb;
 			thr_dat->fade = 0xDEAD;
 			if (fd_is_valid(thr_dat->th_ev))
 				close(thr_dat->th_ev);
-PR_LNO
 			if (fd_is_valid(thr_dat->back_sig)) 
 				close(thr_dat->back_sig);
-PR_LNO
 			// liberate the inflight cl thread and destroy
 			sem_getvalue(&thr_dat->semaphore, &semval);
 			if (semval == 1) {
 				sem_destroy(&thr_dat->semaphore);
-PR_LNO
 				pthread_mutex_unlock(&mt_gl);
 				break;
 			}
 		}
 		pthread_mutex_unlock(&mt_gl);
-PR_LNO
 		pthread_yield();
 		usleep(100000);
 	} while (1);
 	pthread_mutex_lock(&mt_gl);
 	ret = g_hash_table_remove(the_ght, (gconstpointer)loc_key);
-PR_LNO
 	pthread_mutex_unlock(&mt_gl);
 	return ret;
 }
@@ -570,26 +558,21 @@ gpointer mts_ghash_table_lookup(GHashTable *the_ght, gconstpointer loc_key )
 	do {
 		pthread_mutex_lock(&mt_gl);
 		tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
-PR_LNO
 		if (!tempb) {
 			pthread_mutex_unlock(&mt_gl);
-PR_LNO
 			return tempb;
 		}
 		thr_dat = (struct th_lk_str *)tempb;
 //check thread state
 		if (thr_dat->fade != 0xDEAD) {
 			swt = sem_trywait(&thr_dat->semaphore);
-PR_LNO
 			if (!swt) {
 				pthread_mutex_unlock(&mt_gl);
-PR_LNO
 				return tempb;
 			}
 		}
 		pthread_mutex_unlock(&mt_gl);
 		num_trys++;
-PR_LNO
 		pthread_yield();
 		usleep(100000);
 	} while (num_trys < 10 );
@@ -601,10 +584,8 @@ void kdf_cleanup_ho(gpointer data)
 {
 	char *locptr = (char *)data;
 
-PR_LNO
 	if (locptr)
 		free(locptr);
-PR_LNO
 }
 
 void vdf_cleanup_ho(gpointer data)
@@ -614,10 +595,8 @@ void vdf_cleanup_ho(gpointer data)
 	thr_dat = (struct th_lk_str *)data;
 
 	if (thr_dat) {
-PR_LNO
 		free(thr_dat);
 	}
-PR_LNO
 
 }
 
@@ -670,25 +649,21 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 		//finally it will signal back_Sig
 		s = read(loc_val->th_ev, &u, sizeof(uint64_t)); //
 
-PR_LNO
 		if (s != sizeof(uint64_t))
 			goto leave_en;
 		if (u == 0xDEAD)
 			goto leave_en;
 
-PR_LNO
 		if (loc_val->th_str == NULL)
 			goto leave_en;
 		ret = strlen(loc_val->th_str);
 
-PR_LNO
 		printf("sending %d chars : \n %s\n", ret, loc_val->th_str);
 		if (gnutls_record_send(session, loc_val->th_str, ret) != ret)
 			goto leave_en;
 		if ( loc_val->fade == 0xDEAD )
 			goto leave_en;
 
-PR_LNO
 		ret1 = 0;
 		ret1 += timed_gnutls_record_recv(session, buffer, MAX_BUFF); // 
 		if ( loc_val->fade == 0xDEAD )
@@ -707,7 +682,6 @@ PR_LNO
 		buffer[ret1] = 0;
 		loc_val->th_str = buffer;
 
-PR_LNO
 			u = 1;
 		s = write(loc_val->back_sig, &u, sizeof(uint64_t));
 		if ( loc_val->fade == 0xDEAD )
@@ -715,9 +689,7 @@ PR_LNO
 	}
 
 leave_en:
-PR_LNO
 	mts_ghash_table_remove( the_ght, (gconstpointer)loc_key);
-PR_LNO
 }
 
 void exokey_worker(gnutls_session_t session, char *buffer)
@@ -758,7 +730,6 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	//write the data back to
 	//give up the semaphore
 	printf("Going to search the got for %s\n", loc_key);
-PR_LNO
 	tempb = mts_ghash_table_lookup(the_ght, (gconstpointer)loc_key);
 	if (!tempb) {
 		DBG("ExoNet not connected here, not in table\n");
@@ -766,10 +737,8 @@ PR_LNO
 	}
 	//semaphore is already locked!!
 
-PR_LNO
 	thr_dat = (struct th_lk_str *)tempb;
 	thr_dat->th_str = buffer;
-PR_LNO
 
 	if (fd_is_valid(thr_dat->th_ev))
 		s = write(thr_dat->th_ev, &u, sizeof(uint64_t));
@@ -780,7 +749,6 @@ PR_LNO
 	if ( thr_dat->fade == 0xDEAD )
 		goto leave_ek;
 
-PR_LNO
 
 	if (fd_is_valid(thr_dat->th_ev))
 		s = timed_ev_read(thr_dat->back_sig, &u, sizeof(uint64_t)); //ISSUE:t/o or use semaphore
@@ -791,7 +759,6 @@ PR_LNO
 	if ( thr_dat->fade == 0xDEAD )
 		goto leave_ek;
 
-PR_LNO
 
 	if (gnutls_record_send(session, thr_dat->th_str, strlen(thr_dat->th_str))
 	    != strlen(thr_dat->th_str))
@@ -800,7 +767,6 @@ PR_LNO
 		goto leave_ek;
 
 leave_ek:
-PR_LNO
 	if (thr_dat)
 		sem_post(&thr_dat->semaphore);  // decrement
 	if (loc_key)

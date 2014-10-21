@@ -24,7 +24,7 @@
 
 
 #ifdef DBG_FLG
-#define PR_LNO  printf("\n LINE# : %d |   func : %s \n\n", __LINE__, __func__);
+#define PR_LNO  fprintf(stderr,"\n LINE# : %d |   func : %s \n\n", __LINE__, __func__);
 #else
 #define PR_LNO
 #endif
@@ -59,9 +59,11 @@ struct th_lk_str {
 	int	back_sig;
 	sem_t semaphore;
 	char *	th_str; // thread string
+	uint64_t fade;
 };
 
 static bool keep_running = true;
+static pthread_mutex_t mt_gl = PTHREAD_MUTEX_INITIALIZER;
 
 static char keyfiledat[] =
 	"-----BEGIN RSA PRIVATE KEY-----\n"
@@ -190,6 +192,9 @@ void vdf_cleanup_ho(gpointer data);
 void kdf_cleanup_ho(gpointer data);
 void exonet_worker(gnutls_session_t, char *);
 void exokey_worker(gnutls_session_t, char *);
+static int timed_ev_read(int fd, void *buffer, size_t data_size);
+static int timed_gnutls_record_recv(gnutls_session_t session, void *buffer,
+			     size_t data_size);
 
 static void sig_Handler(int sig)
 {
@@ -362,7 +367,7 @@ void *connection_handler(void *conn_sd)
 	/* see the Getting peer's information example */
 	/* print_info(session); */
 	while(keep_running) {
-		ret = gnutls_record_recv(session, buffer, MAX_BUFF);
+		ret = timed_gnutls_record_recv(session, buffer, MAX_BUFF); // 
 		if (ret == 0) {
 			printf
 				("\n- Peer has closed the GnuTLS connection\n");
@@ -472,48 +477,125 @@ int _verify_certificate_callback(gnutls_session_t session)
 	return 0;
 }
 
+
+gboolean mts_ghash_table_replace(GHashTable *the_ght, gpointer loc_key, gpointer loc_val)
+{
+	gboolean ret;
+	gpointer tempb = NULL;
+	struct th_lk_str * thr_dat;
+
+	do {
+		pthread_mutex_lock(&mt_gl);
+		tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
+		if (tempb) {
+			thr_dat = (struct th_lk_str *)tempb;
+			thr_dat->fade = 0xDEAD;
+			write(thr_dat->th_ev, &thr_dat->fade, sizeof(uint64_t));
+			write(thr_dat->back_sig, &thr_dat->fade, sizeof(uint64_t));
+		}
+		else {
+			pthread_mutex_unlock(&mt_gl);
+			break;
+		}
+		pthread_mutex_unlock(&mt_gl);
+		pthread_yield();
+		usleep(100000);
+	} while (1);
+	pthread_mutex_lock(&mt_gl);
+	g_hash_table_replace(the_ght, (gpointer)loc_key, (gpointer)loc_val);
+	pthread_mutex_unlock(&mt_gl);
+	ret = true;
+	return ret;
+
+}
+
+gboolean mts_ghash_table_remove(GHashTable *the_ght, gconstpointer loc_key)
+{
+//close the th_ev and back_sig
+//set the state to dead
+//giveup mutex
+//sleep mutex-wait till semaphore count is 0
+	gboolean ret;
+	gpointer tempb;
+	struct th_lk_str * thr_dat;
+	int semval;
+
+	do { 
+		pthread_mutex_lock(&mt_gl);
+		tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
+		if (tempb) {
+			thr_dat = (struct th_lk_str *)tempb;
+			thr_dat->fade = 0xDEAD;
+			if (fd_is_valid(thr_dat->th_ev))
+				close(thr_dat->th_ev);
+			if (fd_is_valid(thr_dat->back_sig)) 
+				close(thr_dat->back_sig);
+			// liberate the inflight cl thread and destroy
+			sem_getvalue(&thr_dat->semaphore, &semval);
+			if (semval == 1) {
+				sem_destroy(&thr_dat->semaphore);
+				pthread_mutex_unlock(&mt_gl);
+				break;
+			}
+		}
+		pthread_mutex_unlock(&mt_gl);
+		pthread_yield();
+		usleep(100000);
+	} while (1);
+	pthread_mutex_lock(&mt_gl);
+	ret = g_hash_table_remove(the_ght, (gconstpointer)loc_key);
+	pthread_mutex_unlock(&mt_gl);
+	return ret;
+}
+
+gpointer mts_ghash_table_lookup(GHashTable *the_ght, gconstpointer loc_key )
+{
+	gpointer tempb;
+	struct th_lk_str * thr_dat;
+	int num_trys = 0;
+	int swt;
+
+	do {
+		pthread_mutex_lock(&mt_gl);
+		tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
+		if (!tempb) {
+			pthread_mutex_unlock(&mt_gl);
+			return tempb;
+		}
+		thr_dat = (struct th_lk_str *)tempb;
+//check thread state
+		if (thr_dat->fade != 0xDEAD) {
+			swt = sem_trywait(&thr_dat->semaphore);
+			if (!swt) {
+				pthread_mutex_unlock(&mt_gl);
+				return tempb;
+			}
+		}
+		pthread_mutex_unlock(&mt_gl);
+		num_trys++;
+		pthread_yield();
+		usleep(100000);
+	} while (num_trys < 10 );
+	return false;
+}
+
+
 void kdf_cleanup_ho(gpointer data)
 {
 	char *locptr = (char *)data;
 
-//	free(locptr);
-	printf("differed to val cleanup.\n");
+	if (locptr)
+		free(locptr);
 }
 
 void vdf_cleanup_ho(gpointer data)
 {
 	struct th_lk_str *thr_dat;
-	ssize_t s;
-	uint64_t u;
-	int lsval;
 
-		thr_dat = (struct th_lk_str *)data;
+	thr_dat = (struct th_lk_str *)data;
 
-	u = 0xDEAD;
 	if (thr_dat) {
-		s = write(thr_dat->th_ev, &u, sizeof(uint64_t));
-		if (s != sizeof(uint64_t)) {
-			printf("Cant sent exit to prev thread \n");
-			// try to send the thread an explicit cancel.
-//ISSUE: complete this
-
-			if (fd_is_valid(thr_dat->th_ev))
-				close(thr_dat->th_ev);
-			if (fd_is_valid(thr_dat->back_sig))
-				close(thr_dat->back_sig);
-			// all the mutexed threads are liberated
-			if (!sem_getvalue(&thr_dat->semaphore, &lsval)) {
-				while (sem_trywait(&thr_dat->semaphore) == EAGAIN)
-					sem_post(&thr_dat->semaphore);
-				sem_post(&thr_dat->semaphore);
-				sem_destroy(&thr_dat->semaphore);
-			}
-			if (thr_dat->th_str)
-				free(thr_dat->th_str);
-			if (thr_dat)
-				free(thr_dat);
-			// need to destroy tls session also
-		}
+		free(thr_dat);
 	}
 
 }
@@ -533,7 +615,7 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	if (gnutls_record_send(session, buffer, ret) != 6)
 		goto leave_en;
 
-		ret = gnutls_record_recv(session, buffer, MAX_BUFF);
+		ret = timed_gnutls_record_recv(session, buffer, MAX_BUFF); // 
 	if (ret != 29)
 		goto leave_en;
 	buffer[29] = 0;
@@ -545,20 +627,19 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	DBG("loc_key= %s \n", loc_key);
 	loc_val->th_str = loc_key;
 
+	loc_val->fade = 0;
 	loc_val->th_ev = eventfd(0, 0);
 	loc_val->back_sig = eventfd(0, 0);
 	if (sem_init(&loc_val->semaphore, 0, 1)) {
-		printf("mutex_init failed, do something else here\n");
+		printf("semaphore init failed, do something else here\n");
 		goto leave_en;
 	}
 
 	// find the id of the exonet and populate the global hash table
 	//glib is supposed to be MT safe, otherwise replace will require a
 	//giant lock around it
-/*
- */
-		tempb = g_hash_table_contains(the_ght, (gconstpointer)loc_key);
-	g_hash_table_replace(the_ght, (gpointer)loc_key, (gpointer)loc_val);
+
+	tempb = mts_ghash_table_replace(the_ght, (gpointer)loc_key, (gpointer)loc_val);
 	if (!tempb)
 		printf("Replaced the old thread \n");
 
@@ -566,13 +647,12 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 		//first the thread will set on the th_ev
 		//then it will consume
 		//finally it will signal back_Sig
-		s = read(loc_val->th_ev, &u, sizeof(uint64_t)); //ISSUE: use semaphore
+		s = read(loc_val->th_ev, &u, sizeof(uint64_t)); //
 
 		if (s != sizeof(uint64_t))
-			printf("REad ERROR\n");
+			goto leave_en;
 		if (u == 0xDEAD)
 			goto leave_en;
-//NOT-ISSUE: do cleanup and continue not goto.--WHY?
 
 		if (loc_val->th_str == NULL)
 			goto leave_en;
@@ -581,49 +661,35 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 		printf("sending %d chars : \n %s\n", ret, loc_val->th_str);
 		if (gnutls_record_send(session, loc_val->th_str, ret) != ret)
 			goto leave_en;
-			ret1 = 0;
-		do
-			ret1 += gnutls_record_recv(session, buffer, MAX_BUFF);
-		while (gnutls_record_check_pending(session));
+		if ( loc_val->fade == 0xDEAD )
+			goto leave_en;
+
+		ret1 = 0;
+		ret1 += timed_gnutls_record_recv(session, buffer, MAX_BUFF); // 
+		if ( loc_val->fade == 0xDEAD )
+			goto leave_en;
+/*
+		do {
+			ret1 += gnutls_record_recv(session, buffer, MAX_BUFF); // ISSUE: time-me
+			if ( loc_val->fade == 0xDEAD )
+				goto leave_en;
+		} while (gnutls_record_check_pending(session));
+*/
 		if (ret1 < ret) {
 			printf("\n ret1 = %d, recvd: %s\n", ret1, buffer);
 			goto leave_en;
 		}
 		buffer[ret1] = 0;
-		/*
-		 * if (loc_val->th_str)
-		 *      free(loc_val->th_str);
-		 * loc_val->th_str = malloc(sizeof(buffer));
-		 * loc_val->th_str = strncpy(loc_val->th_str, buffer, sizeof(buffer));
-		 */
 		loc_val->th_str = buffer;
 
 			u = 1;
-		s = write(loc_val->back_sig, &u, sizeof(uint64_t)); //ISSUE: use semaphore
+		s = write(loc_val->back_sig, &u, sizeof(uint64_t));
+		if ( loc_val->fade == 0xDEAD )
+			goto leave_en;
 	}
 
 leave_en:
-	if (loc_val) {
-		if (fd_is_valid(loc_val->th_ev))
-			close(loc_val->th_ev);
-		if (fd_is_valid(loc_val->back_sig))
-			close(loc_val->back_sig);
-		// all the mutexed threads are liberated
-		if (!sem_getvalue(&loc_val->semaphore, &lsval)) {
-			while (sem_trywait(&loc_val->semaphore) == EAGAIN)
-				sem_post(&loc_val->semaphore);
-			sem_post(&loc_val->semaphore);
-			sem_destroy(&loc_val->semaphore);
-		}
-		/*
-		 * if (loc_val->th_str)
-		 *      free(loc_val->th_str);
-		 */
-	}
-	if (loc_key)
-		free(loc_key);
-	if (loc_val)
-		free(loc_val);
+	mts_ghash_table_remove( the_ght, (gconstpointer)loc_key);
 }
 
 void exokey_worker(gnutls_session_t session, char *buffer)
@@ -632,7 +698,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	char *loc_key = NULL, *tmpc = NULL;
 	struct th_lk_str *thr_dat = NULL;
 	ssize_t s;
-	uint64_t u;
+	uint64_t u = 1;
 	int ret = 6;
 
 	DBG("buffer = %s \n", buffer);
@@ -640,7 +706,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	if (gnutls_record_send(session, buffer, ret) != 6)
 		goto leave_ek;
 
-		ret = gnutls_record_recv(session, buffer, MAX_BUFF);
+		ret = timed_gnutls_record_recv(session, buffer, MAX_BUFF); // 
 	if (ret < 100)
 		goto leave_ek;
 	buffer[ret] = 0;
@@ -657,65 +723,147 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 
 
 	//find the net worker
-	//take the mutex to lock out all other producer threads
+	//take the semaphore to lock out all other producer threads
 	//tell the net wrkr to consume the data
 	//by writing to the eventfd
 	//wait to read back on the back_sig
 	//write the data back to
-	//give up the mutex
+	//give up the semaphore
 	printf("Going to search the got for %s\n", loc_key);
-	tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
+	tempb = mts_ghash_table_lookup(the_ght, (gconstpointer)loc_key);
 	if (!tempb) {
 		DBG("ExoNet not connected here, not in table\n");
 		goto leave_ek;
 	}
-	thr_dat = (struct th_lk_str *)tempb;
-	sem_wait(&thr_dat->semaphore);
+	//semaphore is already locked!!
 
-/*sg
- *      if (thr_dat->th_str)
- *              free(thr_dat->th_str);
- *      thr_dat->th_str = malloc(sizeof(buffer));
- *      thr_dat->th_str = strncpy(thr_dat->th_str, buffer, sizeof(buffer));
- */
+	thr_dat = (struct th_lk_str *)tempb;
 	thr_dat->th_str = buffer;
 
-		u = 1;
 	if (fd_is_valid(thr_dat->th_ev))
-		s = write(thr_dat->th_ev, &u, sizeof(uint64_t)); //ISSUE:limit t/o of this block
-	// use semaphore
+		s = write(thr_dat->th_ev, &u, sizeof(uint64_t));
 	else
 		goto leave_ek;
 	if (s != sizeof(uint64_t) || u != 1)
 		goto leave_ek;
+	if ( thr_dat->fade == 0xDEAD )
+		goto leave_ek;
 
 
 	if (fd_is_valid(thr_dat->th_ev))
-		s = read(thr_dat->back_sig, &u, sizeof(uint64_t)); //ISSUE:limit t/o of this block
+		s = timed_ev_read(thr_dat->back_sig, &u, sizeof(uint64_t)); //ISSUE:t/o or use semaphore
 	else
 		goto leave_ek;
 	if (s != sizeof(uint64_t) || u != 1)
+		goto leave_ek;
+	if ( thr_dat->fade == 0xDEAD )
 		goto leave_ek;
 
 
 	if (gnutls_record_send(session, thr_dat->th_str, strlen(thr_dat->th_str))
 	    != strlen(thr_dat->th_str))
 		goto leave_ek;
+	if ( thr_dat->fade == 0xDEAD )
+		goto leave_ek;
 
-	leave_ek:
+leave_ek:
 	if (thr_dat)
 		sem_post(&thr_dat->semaphore);  // decrement
-	/*
-	 * if (thr_dat)
-	 *      if (thr_dat->th_str)
-	 *              free(thr_dat->th_str);
-	 */
-//ISSUE: do a timed wait for back_sig before cleaningup
 	if (loc_key)
 		free(loc_key);
 }
 
 
 // ISSUE: evaluate the need to do looped send till the entire record is sent.
-// ISSUE: evaluate the need to do looped receive till gnutls_record_check_pending is 0.
-//			one possible example in the code
+
+static int timed_ev_read(int fd, void *buffer, size_t data_size)
+{
+
+	int loc_flags;
+	fd_set readset;
+	struct timeval tv;
+	int result;
+
+	PR_LNO
+	// Set non-blocking mode
+	loc_flags = fcntl(fd, F_GETFL, 0);
+	if (fcntl(fd, F_SETFL, loc_flags | O_NONBLOCK) == -1)
+		return -1;
+
+	// Initialize the set
+	FD_ZERO(&readset);
+	FD_SET(fd, &readset);
+	// Initialize time out struct
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+	// select()
+	result = select(fd + 1, &readset, NULL, NULL, &tv);
+	// Check status
+	if (result < 0) {
+		return -1;
+	} else if (result > 0 && FD_ISSET(fd, &readset)) {
+		result = read (fd, buffer, data_size);
+	}
+
+leave_tr:
+	PR_LNO
+	fcntl(fd, F_SETFL, loc_flags);
+	return result;
+}
+
+static int timed_gnutls_record_recv(gnutls_session_t session, void *buffer,
+			     size_t data_size)
+{
+//start time
+//make sure socket is set non-blocking or explicitly do it
+//wait on select for activity / timeout
+//if activity then loop to retrieve entire record till
+//  it wont give eagain
+//return/fail with the status
+
+	time_t strtime;
+	time_t dura_max;
+	int sd;
+	int loc_flags;
+	fd_set readset;
+	struct timeval tv;
+	int result;
+
+	PR_LNO
+		strtime = time(NULL);
+
+	sd = gnutls_transport_get_int(session);
+	// Set non-blocking mode
+	loc_flags = fcntl(sd, F_GETFL, 0);
+	if (fcntl(sd, F_SETFL, loc_flags | O_NONBLOCK) == -1)
+		return -1;
+
+	// Initialize the set
+	FD_ZERO(&readset);
+	FD_SET(sd, &readset);
+	// Initialize time out struct
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+	// select()
+	result = select(sd + 1, &readset, NULL, NULL, &tv);
+	// Check status
+	if (result < 0) {
+		return -1;
+	} else if (result > 0 && FD_ISSET(sd, &readset)) {
+		// receive
+		do {
+			result = gnutls_record_recv(session, buffer, data_size);
+			dura_max = time(NULL);
+			if (difftime(dura_max, strtime) > 3)
+				goto leave_tg;
+		} while (
+			(result < 0) &&
+			(result == GNUTLS_E_INTERRUPTED || result == GNUTLS_E_AGAIN)
+			);
+	}
+
+leave_tg:
+	PR_LNO
+	fcntl(sd, F_SETFL, loc_flags);
+	return result;
+}

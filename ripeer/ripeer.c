@@ -608,6 +608,7 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	uint64_t u;
 	ssize_t s;
 	int ret1;
+	int premature = 1;
 
 	DBG("buffer = %s \n", buffer);
 	if (gnutls_record_send(session, buffer, ret) != 6)
@@ -637,6 +638,7 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	//glib is supposed to be MT safe, otherwise replace will require a
 	//giant lock around it
 
+	premature = 0;
 	tempb = mts_ghash_table_replace(the_ght, (gpointer)loc_key, (gpointer)loc_val);
 	if (!tempb)
 		printf("Replaced the old thread \n");
@@ -687,7 +689,15 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	}
 
 leave_en:
-	mts_ghash_table_remove( the_ght, (gconstpointer)loc_key);
+	if (premature) {
+		if (loc_key)
+			free(loc_key);
+		if (loc_val)
+			free(loc_val);
+	}
+	else {
+		mts_ghash_table_remove( the_ght, (gconstpointer)loc_key);
+	}
 }
 
 void exokey_worker(gnutls_session_t session, char *buffer)
@@ -698,6 +708,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	ssize_t s;
 	uint64_t u = 1;
 	int ret = 6;
+	int premature = 1;
 
 	DBG("buffer = %s \n", buffer);
 	// send back whatever we received so we will get the json back
@@ -734,6 +745,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 		goto leave_ek;
 	}
 	//semaphore is already locked!!
+	premature = 0;
 
 	thr_dat = (struct th_lk_str *)tempb;
 	thr_dat->th_str = buffer;
@@ -765,8 +777,10 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 		goto leave_ek;
 
 leave_ek:
-	if (thr_dat)
-		sem_post(&thr_dat->semaphore);  // decrement
+	if (!premature) {
+		if (thr_dat)
+			sem_post(&thr_dat->semaphore);  // decrement
+	}
 	if (loc_key)
 		free(loc_key);
 }

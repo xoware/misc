@@ -59,11 +59,12 @@ struct th_lk_str {
 	int	back_sig;
 	sem_t semaphore;
 	char *	th_str; // thread string
-	uint64_t fade;
+	uint64_t stage;
 };
 
 static bool keep_running = true;
 static pthread_mutex_t mt_gl = PTHREAD_MUTEX_INITIALIZER;
+static int someval = 0;
 
 static char keyfiledat[] =
 	"-----BEGIN RSA PRIVATE KEY-----\n"
@@ -401,7 +402,7 @@ void *connection_handler(void *conn_sd)
 	finish_thread:
 	close(sd);
 	gnutls_deinit(session);
-
+	return &someval;
 }
 
 
@@ -412,8 +413,10 @@ int _verify_certificate_callback(gnutls_session_t session)
 {
 	unsigned int status;
 	int ret, type;
+#ifdef COMPATIBL
 	const char *hostname;
 	gnutls_datum_t out;
+#endif
 
 	/* read hostname */
 
@@ -473,7 +476,7 @@ int _verify_certificate_callback(gnutls_session_t session)
 #endif
 
 	/* notify gnutls to continue handshake normally */
-	printf("Certificate Verified");
+	printf("Certificate Verified; \n type = %d\n", type);
 	return 0;
 }
 
@@ -489,19 +492,17 @@ gboolean mts_ghash_table_replace(GHashTable *the_ght, gpointer loc_key, gpointer
 		tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
 		if (tempb) {
 			thr_dat = (struct th_lk_str *)tempb;
-			thr_dat->fade = 0xDEAD;
-			write(thr_dat->th_ev, &thr_dat->fade, sizeof(uint64_t));
-			write(thr_dat->back_sig, &thr_dat->fade, sizeof(uint64_t));
+			thr_dat->stage = 0xDEAD;
+			write(thr_dat->th_ev, &thr_dat->stage, sizeof(uint64_t));
+			write(thr_dat->back_sig, &thr_dat->stage, sizeof(uint64_t));
 		}
 		else {
-			pthread_mutex_unlock(&mt_gl);
 			break;
 		}
 		pthread_mutex_unlock(&mt_gl);
 		pthread_yield();
 		usleep(100000);
 	} while (1);
-	pthread_mutex_lock(&mt_gl);
 	g_hash_table_replace(the_ght, (gpointer)loc_key, (gpointer)loc_val);
 	pthread_mutex_unlock(&mt_gl);
 	ret = true;
@@ -525,7 +526,7 @@ gboolean mts_ghash_table_remove(GHashTable *the_ght, gconstpointer loc_key)
 		tempb = g_hash_table_lookup(the_ght, (gconstpointer)loc_key);
 		if (tempb) {
 			thr_dat = (struct th_lk_str *)tempb;
-			thr_dat->fade = 0xDEAD;
+			thr_dat->stage = 0xDEAD;
 			if (fd_is_valid(thr_dat->th_ev))
 				close(thr_dat->th_ev);
 			if (fd_is_valid(thr_dat->back_sig)) 
@@ -534,7 +535,6 @@ gboolean mts_ghash_table_remove(GHashTable *the_ght, gconstpointer loc_key)
 			sem_getvalue(&thr_dat->semaphore, &semval);
 			if (semval == 1) {
 				sem_destroy(&thr_dat->semaphore);
-				pthread_mutex_unlock(&mt_gl);
 				break;
 			}
 		}
@@ -542,7 +542,6 @@ gboolean mts_ghash_table_remove(GHashTable *the_ght, gconstpointer loc_key)
 		pthread_yield();
 		usleep(100000);
 	} while (1);
-	pthread_mutex_lock(&mt_gl);
 	ret = g_hash_table_remove(the_ght, (gconstpointer)loc_key);
 	pthread_mutex_unlock(&mt_gl);
 	return ret;
@@ -564,7 +563,7 @@ gpointer mts_ghash_table_lookup(GHashTable *the_ght, gconstpointer loc_key )
 		}
 		thr_dat = (struct th_lk_str *)tempb;
 //check thread state
-		if (thr_dat->fade != 0xDEAD) {
+		if (thr_dat->stage != 0xDEAD) {
 			swt = sem_trywait(&thr_dat->semaphore);
 			if (!swt) {
 				pthread_mutex_unlock(&mt_gl);
@@ -608,7 +607,6 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	int ret = 6;
 	uint64_t u;
 	ssize_t s;
-	int lsval;
 	int ret1;
 
 	DBG("buffer = %s \n", buffer);
@@ -627,7 +625,7 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 	DBG("loc_key= %s \n", loc_key);
 	loc_val->th_str = loc_key;
 
-	loc_val->fade = 0;
+	loc_val->stage = 0xA11FE;
 	loc_val->th_ev = eventfd(0, 0);
 	loc_val->back_sig = eventfd(0, 0);
 	if (sem_init(&loc_val->semaphore, 0, 1)) {
@@ -661,17 +659,17 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 		printf("sending %d chars : \n %s\n", ret, loc_val->th_str);
 		if (gnutls_record_send(session, loc_val->th_str, ret) != ret)
 			goto leave_en;
-		if ( loc_val->fade == 0xDEAD )
+		if ( loc_val->stage == 0xDEAD )
 			goto leave_en;
 
 		ret1 = 0;
 		ret1 += timed_gnutls_record_recv(session, buffer, MAX_BUFF); // 
-		if ( loc_val->fade == 0xDEAD )
+		if ( loc_val->stage == 0xDEAD )
 			goto leave_en;
 /*
 		do {
 			ret1 += gnutls_record_recv(session, buffer, MAX_BUFF); // ISSUE: time-me
-			if ( loc_val->fade == 0xDEAD )
+			if ( loc_val->stage == 0xDEAD )
 				goto leave_en;
 		} while (gnutls_record_check_pending(session));
 */
@@ -684,7 +682,7 @@ void exonet_worker(gnutls_session_t session, char *buffer)
 
 			u = 1;
 		s = write(loc_val->back_sig, &u, sizeof(uint64_t));
-		if ( loc_val->fade == 0xDEAD )
+		if ( loc_val->stage == 0xDEAD )
 			goto leave_en;
 	}
 
@@ -746,7 +744,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 		goto leave_ek;
 	if (s != sizeof(uint64_t) || u != 1)
 		goto leave_ek;
-	if ( thr_dat->fade == 0xDEAD )
+	if ( thr_dat->stage == 0xDEAD )
 		goto leave_ek;
 
 
@@ -756,14 +754,14 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 		goto leave_ek;
 	if (s != sizeof(uint64_t) || u != 1)
 		goto leave_ek;
-	if ( thr_dat->fade == 0xDEAD )
+	if ( thr_dat->stage == 0xDEAD )
 		goto leave_ek;
 
 
 	if (gnutls_record_send(session, thr_dat->th_str, strlen(thr_dat->th_str))
 	    != strlen(thr_dat->th_str))
 		goto leave_ek;
-	if ( thr_dat->fade == 0xDEAD )
+	if ( thr_dat->stage == 0xDEAD )
 		goto leave_ek;
 
 leave_ek:
@@ -803,6 +801,7 @@ static int timed_ev_read(int fd, void *buffer, size_t data_size)
 		return -1;
 	} else if (result > 0 && FD_ISSET(fd, &readset)) {
 		result = read (fd, buffer, data_size);
+		goto leave_tr;
 	}
 
 leave_tr:

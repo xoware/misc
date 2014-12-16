@@ -719,7 +719,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	if (ret < 100)
 		goto leave_ek;
 	buffer[ret] = 0;
-	DBG("buffer = %s \n", buffer);
+	//DBG("buffer = %s \n", buffer);
 
 	//find loc_key in the json
 		loc_key = strstr(buffer, "EN_DDNS") + 2;
@@ -770,6 +770,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 		goto leave_ek;
 
 
+	DBG("th_str = %s \n", thr_dat->th_str);
 	if (gnutls_record_send(session, thr_dat->th_str, strlen(thr_dat->th_str))
 	    != strlen(thr_dat->th_str))
 		goto leave_ek;

@@ -284,7 +284,7 @@ int main(void)
 		exit(EXIT_FAILURE);
 	}
 
-	optval = 30;            /* 30 sec before starting probes */
+	optval = 10;            /* 30 sec before starting probes */
 	setsockopt(listen_sd, SOL_TCP, TCP_KEEPIDLE, &optval, sizeof(optval));
 	optval = 2;             /* 2 probes max */
 	setsockopt(listen_sd, SOL_TCP, TCP_KEEPCNT, &optval, sizeof(optval));
@@ -807,7 +807,7 @@ static int timed_ev_read(int fd, void *buffer, size_t data_size)
 	FD_ZERO(&readset);
 	FD_SET(fd, &readset);
 	// Initialize time out struct
-	tv.tv_sec = 1;
+	tv.tv_sec = 3;
 	tv.tv_usec = 0;
 	// select()
 	result = select(fd + 1, &readset, NULL, NULL, &tv);
@@ -856,7 +856,7 @@ static int timed_gnutls_record_recv(gnutls_session_t session, void *buffer,
 	FD_ZERO(&readset);
 	FD_SET(sd, &readset);
 	// Initialize time out struct
-	tv.tv_sec = 1;
+	tv.tv_sec = 3;
 	tv.tv_usec = 0;
 	// select()
 	result = select(sd + 1, &readset, NULL, NULL, &tv);

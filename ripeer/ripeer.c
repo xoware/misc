@@ -856,8 +856,8 @@ static int timed_gnutls_record_recv(gnutls_session_t session, void *buffer,
 	FD_ZERO(&readset);
 	FD_SET(sd, &readset);
 	// Initialize time out struct
-	tv.tv_sec = 3;
-	tv.tv_usec = 0;
+	tv.tv_sec = 2;
+	tv.tv_usec = 500000;
 	// select()
 	result = select(sd + 1, &readset, NULL, NULL, &tv);
 	// Check status

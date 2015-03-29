@@ -284,7 +284,7 @@ int main(void)
 		exit(EXIT_FAILURE);
 	}
 
-	optval = 30;            /* 30 sec before starting probes */
+	optval = 10;            /* 30 sec before starting probes */
 	setsockopt(listen_sd, SOL_TCP, TCP_KEEPIDLE, &optval, sizeof(optval));
 	optval = 2;             /* 2 probes max */
 	setsockopt(listen_sd, SOL_TCP, TCP_KEEPCNT, &optval, sizeof(optval));
@@ -719,7 +719,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 	if (ret < 100)
 		goto leave_ek;
 	buffer[ret] = 0;
-	DBG("buffer = %s \n", buffer);
+	//DBG("buffer = %s \n", buffer);
 
 	//find loc_key in the json
 		loc_key = strstr(buffer, "EN_DDNS") + 2;
@@ -770,6 +770,7 @@ void exokey_worker(gnutls_session_t session, char *buffer)
 		goto leave_ek;
 
 
+	DBG("th_str = %s \n", thr_dat->th_str);
 	if (gnutls_record_send(session, thr_dat->th_str, strlen(thr_dat->th_str))
 	    != strlen(thr_dat->th_str))
 		goto leave_ek;
@@ -806,7 +807,7 @@ static int timed_ev_read(int fd, void *buffer, size_t data_size)
 	FD_ZERO(&readset);
 	FD_SET(fd, &readset);
 	// Initialize time out struct
-	tv.tv_sec = 1;
+	tv.tv_sec = 3;
 	tv.tv_usec = 0;
 	// select()
 	result = select(fd + 1, &readset, NULL, NULL, &tv);
@@ -855,8 +856,8 @@ static int timed_gnutls_record_recv(gnutls_session_t session, void *buffer,
 	FD_ZERO(&readset);
 	FD_SET(sd, &readset);
 	// Initialize time out struct
-	tv.tv_sec = 1;
-	tv.tv_usec = 0;
+	tv.tv_sec = 2;
+	tv.tv_usec = 500000;
 	// select()
 	result = select(sd + 1, &readset, NULL, NULL, &tv);
 	// Check status

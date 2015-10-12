@@ -58,7 +58,8 @@ def print_html_form ():
   print(HTML_TEMPLATE % {'SCRIPT_NAME':os.environ['SCRIPT_NAME']})
   
 def log_to_sql(form):
-  """
+  """ do the logging to DB
+ 
   CREATE USER 'xoware'@'localhost' IDENTIFIED BY 'vpex';
   GRANT INSERT,SELECT ON xo_production.* TO 'xoware'@'localhost';
 
@@ -69,14 +70,12 @@ def log_to_sql(form):
     cursor = cnx.cursor()
     
     add_log_sql = ("INSERT INTO ExoKey_Programmer_Log "
-	    " SET ID=0,  Status='%s', IP_Address='%s', Message='%s', "
-	    " Samba_Log='%s', Insert_Date=CURRENT_TIMESTAMP") % \
-        (form['status'].value, os.environ['REMOTE_ADDR'],
-        form['message'].value, form['samba_log'].value)
+	    " SET ID=0,  Status=%s, IP_Address=%s, Message=%s, "
+	    " Samba_Log=%s, Insert_Date=CURRENT_TIMESTAMP") 
 #    print_status_json('DEBUG', 1, str(add_log_sql))
-#    log_data = (form['status'].value, os.environ['REMOTE_ADDR'],
-#        form['message'].value, form['samba_log'].value)
-    cursor.execute(add_log_sql)
+    log_data = (form['status'].value, os.environ['REMOTE_ADDR'],
+        form['message'].value, form['samba_log'].value)
+    cursor.execute(add_log_sql, log_data)
     cnx.commit()
     cursor.close()
     cnx.close()

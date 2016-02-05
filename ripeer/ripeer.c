@@ -807,7 +807,7 @@ static int timed_ev_read(int fd, void *buffer, size_t data_size)
 	FD_ZERO(&readset);
 	FD_SET(fd, &readset);
 	// Initialize time out struct
-	tv.tv_sec = 3;
+	tv.tv_sec = 5;
 	tv.tv_usec = 0;
 	// select()
 	result = select(fd + 1, &readset, NULL, NULL, &tv);
@@ -856,8 +856,8 @@ static int timed_gnutls_record_recv(gnutls_session_t session, void *buffer,
 	FD_ZERO(&readset);
 	FD_SET(sd, &readset);
 	// Initialize time out struct
-	tv.tv_sec = 2;
-	tv.tv_usec = 500000;
+	tv.tv_sec = 4;
+	tv.tv_usec = 0;
 	// select()
 	result = select(sd + 1, &readset, NULL, NULL, &tv);
 	// Check status
